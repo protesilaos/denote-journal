@@ -325,9 +325,11 @@ file's title.  This has the same meaning as in `denote-link'."
                           (calendar-extract-year calendar-date)))
                (`(,current-month ,_ ,current-year) calendar-date)
                (`(,previous-month . ,previous-year) (calendar-increment-month-cons (- interval 1)))
+               (`(,previous-month-2 . ,previous-year-2) (calendar-increment-month-cons (- interval 2)))
                (`(,next-month . ,next-year) (calendar-increment-month-cons (+ interval 1)))
-               (years (list previous-year current-year next-year))
-               (months (list previous-month current-month next-month))
+               (`(,next-month-2 . ,next-year-2) (calendar-increment-month-cons (+ interval 2)))
+               (years (list previous-year-2 previous-year current-year next-year next-year-2))
+               (months (list previous-month-2 previous-month current-month next-month next-month-2))
                (time-regexp (concat (regexp-opt (mapcar #'number-to-string years))
                                     (regexp-opt (mapcar (lambda (number) (format "%02d" number)) months))))
                (keyword-regexp (denote-journal--keyword-regex)))
@@ -345,7 +347,8 @@ file's title.  This has the same meaning as in `denote-link'."
               (files (denote-journal-calendar--get-files date))
               (dates (delq nil (mapcar #'denote-journal-calendar--file-to-date files))))
     (dolist (date dates)
-      (calendar-mark-visible-date date 'denote-journal-calendar))))
+      (when (calendar-date-is-visible-p date)
+        (calendar-mark-visible-date date 'denote-journal-calendar)))))
 
 (defun denote-journal-calendar--date-to-time (calendar-date)
   "Return internal time of `calendar' CALENDAR-DATE.
