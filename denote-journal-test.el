@@ -65,6 +65,22 @@
            (let ((denote-journal-title-format 'day-date-month-year-24h))
              (denote-journal-daily--title-format)))))
 
+(ert-deftest djt-denote-journal-new-entry-uses-identifier-format ()
+  "Make sure that `denote-journal-new-entry' uses Denote's ID facilities."
+  (let ((captured-id nil)
+        (denote-journal-identifier-format "%Y-%m-%dT%H%M%S"))
+    (cl-letf (((symbol-function #'denote)
+               (lambda (&rest _)
+                 (let ((denote-used-identifiers (make-hash-table :test #'equal)))
+                   (setq captured-id
+                         (funcall denote-get-identifier-function
+                                  nil
+                                  (denote-valid-date-p "2025-08-23 10:11:12"))))))
+              ((symbol-function #'run-hooks) #'ignore)
+              ((symbol-function #'denote-journal-directory) (lambda () default-directory)))
+      (denote-journal-new-entry "2025-08-23 10:11:12"))
+    (should (string= captured-id "2025-08-23T101112"))))
+
 (ert-deftest djt--denote-journal--filename-regexp ()
   "Test that `denote-journal--filename-regexp' returns the expected regular expression."
   (let ((time (denote-valid-date-p "2025-08-23")))
@@ -111,6 +127,29 @@
     (should (null (denote-journal--date-in-interval-p older-date 'weekly)))
     (should (null (denote-journal--date-in-interval-p older-date 'monthly)))
     (should (null (denote-journal--date-in-interval-p older-date 'yearly)))))
+
+(ert-deftest djt--denote-journal--get-entry ()
+  "Test that `denote-journal--get-entry' uses note dates for filtering."
+  (let ((time (denote-valid-date-p "2025-08-23"))
+        (files '("daily" "weekly" "monthly" "yearly" "other")))
+    (cl-letf (((symbol-function #'denote-journal--directory-files)
+               (lambda () files))
+              ((symbol-function #'denote-journal--retrieve-file-date)
+               (lambda (file)
+                 (pcase file
+                   ("daily" (denote-valid-date-p "2025-08-23"))
+                   ("weekly" (denote-valid-date-p "2025-08-20"))
+                   ("monthly" (denote-valid-date-p "2025-08-01"))
+                   ("yearly" (denote-valid-date-p "2025-02-01"))
+                   ("other" (denote-valid-date-p "2024-08-23"))))))
+      (should (equal (denote-journal--get-entry time 'daily)
+                     '("daily")))
+      (should (equal (denote-journal--get-entry time 'weekly)
+                     '("daily" "weekly")))
+      (should (equal (denote-journal--get-entry time 'monthly)
+                     '("daily" "weekly" "monthly")))
+      (should (equal (denote-journal--get-entry time 'yearly)
+                     '("daily" "weekly" "monthly" "yearly"))))))
 
 (provide 'denote-journal-test)
 ;;; denote-journal-test.el ends here
