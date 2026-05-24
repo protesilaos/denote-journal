@@ -147,6 +147,25 @@ custom string, or a symbol:
                  day-date-month-year-12h)
           (string :tag "Custom string with `format-time-string' specifiers")))
 
+(defcustom denote-journal-identifier-format nil
+  "Date format of journal note identifiers.
+When nil, journal entries use the prevailing value of
+`denote-get-identifier-function'.  When the value is a string, it is
+used as `denote-date-identifier-format' for
+`denote-generate-identifier-as-date' in
+`denote-journal-new-entry'.  The string is interpreted by
+`format-time-string'.
+
+Because this relies on Denote's date-based identifier generator,
+custom values should remain compatible with that function and with
+`date-to-time'.  Journal entry lookup is based on each note's date
+field, so changing the identifier format does not affect
+existing-or-new journal commands."
+  :group 'denote-journal
+  :type '(choice
+          (const :tag "Use Denote's prevailing identifier generation" nil)
+          (string :tag "Custom string with `format-time-string' specifiers")))
+
 (defcustom denote-journal-interval 'daily
   "The interval used by `denote-journal-new-or-existing-entry'.
 The value is a symbol of `daily', `weekly', `monthly', or `yearly'.  Any
@@ -257,7 +276,9 @@ is non-nil, prompt the user for a template among
   "Create a new journal entry in variable `denote-journal-directory'.
 Use the variable `denote-journal-keyword' as a keyword for the
 newly created file.  Set the title of the new entry according to the
-value of the user option `denote-journal-title-format'.
+value of the user option `denote-journal-title-format'.  When
+`denote-journal-identifier-format' is non-nil, use it to construct
+the identifier of the new entry.
 
 With optional DATE as a prefix argument, prompt for a date.  If
 `denote-date-prompt-use-org-read-date' is non-nil, use the Org
@@ -268,7 +289,13 @@ that covered in the documentation of the `denote' function.  It
 is internally processed by `denote-valid-date-p'."
   (interactive (list (when current-prefix-arg (denote-date-prompt))))
   (let ((internal-date (or (denote-valid-date-p date) (current-time)))
-        (denote-directory (denote-journal-directory)))
+        (denote-directory (denote-journal-directory))
+        (denote-date-identifier-format
+         (or denote-journal-identifier-format denote-date-identifier-format))
+        (denote-get-identifier-function
+         (if denote-journal-identifier-format
+             #'denote-generate-identifier-as-date
+           denote-get-identifier-function)))
     (denote
      (denote-journal-daily--title-format internal-date)
      (denote-journal-keyword)
@@ -324,12 +351,45 @@ DATE has the same format as that returned by `denote-valid-date-p'."
         date))
     (error "The date `%s' does not satisfy `denote-valid-date-p'" date)))
 
+(defun denote-journal--same-interval-p (date-a date-b interval)
+  "Return non-nil if DATE-A and DATE-B fall within the same INTERVAL.
+INTERVAL is one among the symbols used by `denote-journal-interval'.
+DATE-A and DATE-B have the same format as that returned by
+`current-time'."
+  (let ((specifiers (pcase interval
+                      ('weekly "%Y-%V")
+                      ('monthly "%Y-%m")
+                      ('yearly "%Y")
+                      (_ "%F"))))
+    (string=
+     (format-time-string specifiers date-a)
+     (format-time-string specifiers date-b))))
+
+(defun denote-journal--directory-files ()
+  "Return all journal files in `denote-journal-directory'."
+  (let ((denote-directory (denote-journal-directory)))
+    (denote-directory-files (denote-journal--keyword-regex))))
+
+(defun denote-journal--retrieve-file-date (file)
+  "Return FILE date as an internal time value."
+  (or
+   (when-let* ((file-type (denote-filetype-heuristics file))
+               (date-value (denote-retrieve-front-matter-date-value file file-type)))
+     (denote-valid-date-p date-value))
+   (when-let* ((identifier (denote-retrieve-filename-identifier file))
+               (date-value (ignore-errors (denote-id-to-date identifier))))
+     (denote-valid-date-p date-value))))
+
 (defun denote-journal--get-entry (date interval)
   "Return list of files matching a journal for DATE given INTERVAL.
 INTERVAL is one among the symbols used by `denote-journal-interval'.
 DATE has the same format as that returned by `denote-valid-date-p'."
-  (let ((denote-directory (denote-journal-directory)))
-    (denote-directory-files (denote-journal--filename-regexp date interval))))
+  (let ((target-date (or (denote-valid-date-p date) (current-time))))
+    (seq-filter
+     (lambda (file)
+       (when-let* ((file-date (denote-journal--retrieve-file-date file)))
+         (denote-journal--same-interval-p file-date target-date interval)))
+     (denote-journal--directory-files))))
 
 (defun denote-journal-select-file-prompt (files)
   "Prompt for file among FILES if >1, else return the `car'.
@@ -443,53 +503,16 @@ file's title.  This has the same meaning as in `denote-link'."
   "Face to mark a Denote journal entry in the `calendar'.")
 
 (defun denote-journal-calendar--file-to-date (file)
-  "Convert FILE to calendar date by interpreting its identifier."
-  (when-let* ((identifier (denote-retrieve-filename-identifier file))
-              (date (denote-id-to-date identifier))
-              (numbers (mapcar #'string-to-number (split-string date "-"))))
+  "Convert FILE to calendar date by interpreting its note date."
+  (when-let* ((date (denote-journal--retrieve-file-date file))
+              (numbers (mapcar #'string-to-number
+                               (split-string (format-time-string "%F" date) "-"))))
     (pcase-let ((`(,year ,month ,day) numbers))
       (list month day year))))
 
-;; NOTE 2025-11-30: These two are bound by the M-x calendar.  Copying
-;; from the Commentary of calendar.el:
-
-    ;; A note on free variables:
-
-    ;; The calendar passes around a few dynamically bound variables, which
-    ;; unfortunately have rather common names.  They are meant to be
-    ;; available for external functions, so the names can't be changed.
-
-    ;; displayed-month, displayed-year: bound in calendar-generate, the
-    ;;   central month of the 3 month calendar window
-    ;; original-date, number: bound in diary-list-entries, the arguments
-    ;;   with which that function was called.
-    ;; date, entry: bound in diary-list-sexp-entries (qv)
-(defvar displayed-month)
-(defvar displayed-year)
-
-(defun denote-journal-calendar--get-files (calendar-date)
-  "Return files around CALENDAR-DATE in variable `denote-journal-directory'."
-  (pcase-let* ((denote-directory (denote-journal-directory))
-               (interval (calendar-interval
-                          displayed-month displayed-year ; These are local to the `calendar'
-                          (calendar-extract-month calendar-date)
-                          (calendar-extract-year calendar-date)))
-               (`(,current-month ,_ ,current-year) calendar-date)
-               (`(,previous-month . ,previous-year) (calendar-increment-month-cons (- interval 1)))
-               (`(,previous-month-2 . ,previous-year-2) (calendar-increment-month-cons (- interval 2)))
-               (`(,next-month . ,next-year) (calendar-increment-month-cons (+ interval 1)))
-               (`(,next-month-2 . ,next-year-2) (calendar-increment-month-cons (+ interval 2)))
-               (years (list previous-year-2 previous-year current-year next-year next-year-2))
-               (months (list previous-month-2 previous-month current-month next-month next-month-2))
-               (time-regexp (concat (regexp-opt (mapcar #'number-to-string years))
-                                    (regexp-opt (mapcar (lambda (number) (format "%02d" number)) months))))
-               (keyword-regexp (denote-journal--keyword-regex)))
-    (denote-directory-files
-     ;; NOTE 2025-03-31: This complex regular expression is to account
-     ;; for `denote-file-name-components-order'.  We should probably
-     ;; have something in `denote.el' to do this fancy stuff, though
-     ;; this is the first time I have a use-case for it.
-     (format "\\(%1$s.*%2$s\\)\\|\\(%2$s.*%1$s\\)" time-regexp keyword-regexp))))
+(defun denote-journal-calendar--get-files (_calendar-date)
+  "Return journal files in variable `denote-journal-directory'."
+  (denote-journal--directory-files))
 
 (defun denote-journal-calendar-mark-dates ()
   "Mark visible days in the `calendar' that have a Denote journal entry."
