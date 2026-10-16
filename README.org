@@ -136,8 +136,10 @@ Everything is in place to set up the package.
   ;; Default keyword for new journal entries. It can also be a list of
   ;; strings.
   (setq denote-journal-keyword "journal")
-  ;; Read the doc string of `denote-journal-title-format'.
-  (setq denote-journal-title-format 'day-date-month-year))
+  ;; Read the doc strings of `denote-journal-title-format' and
+  ;; `denote-journal-identifier-format'.
+  (setq denote-journal-title-format 'day-date-month-year
+        denote-journal-identifier-format "%Y-%m-%dT%H%M%S"))
 #+end_src
 
 * Overview
@@ -345,6 +347,33 @@ custom string, or a symbol:
   function ~format-time-string~, which are replaced by their given
   date component. For example, the ="Week %V on %A %e %B %Y at %H:%M"=
   will yield a title like =Week 14 on 1 April 2025 at 13:48=.
+
+** Identifier format of new journal entries
+:PROPERTIES:
+:CUSTOM_ID: h:identifier-format-of-new-journal-entries
+:END:
+
+#+vindex: denote-journal-identifier-format
+New journal entries can use a journal-specific identifier format. The
+user option ~denote-journal-identifier-format~ accepts either ~nil~ or
+a custom string:
+
+- When ~denote-journal-identifier-format~ is nil, journal entries use
+  the prevailing value of ~denote-get-identifier-function~.
+
+- When ~denote-journal-identifier-format~ is set to a string, it is
+  used literally except for any "format specifiers", as interpreted by
+  the function ~format-time-string~, which are replaced by their given
+  date component. This string is used as
+  ~denote-date-identifier-format~ for the duration of journal note
+  creation, while still relying on Denote's
+  ~denote-generate-identifier-as-date~.
+
+Because this relies on Denote's date-based identifier generator,
+custom values should remain compatible with that function and with
+~date-to-time~. Journal entry lookup is based on each note's date
+field, so changing the identifier format does not affect commands such as
+~denote-journal-new-or-existing-entry~ or the calendar integration.
 
 ** Create a journal entry using Org capture
 :PROPERTIES:
