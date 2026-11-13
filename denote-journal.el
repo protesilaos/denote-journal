@@ -494,7 +494,10 @@ file's title.  This has the same meaning as in `denote-link'."
 (defun denote-journal-calendar-mark-dates ()
   "Mark visible days in the `calendar' that have a Denote journal entry."
   (interactive)
-  (when-let* ((date (calendar-cursor-to-date))
+  ;; After `calendar-generate-window' the cursor may be at the end of
+  ;; the buffer. In this case, use `calendar-cursor-to-nearest-date'
+  ;; as a fallback.
+  (when-let* ((date (or (calendar-cursor-to-date) (calendar-cursor-to-nearest-date)))
               (files (denote-journal-calendar--get-files date))
               (dates (delq nil (mapcar #'denote-journal-calendar--file-to-date files))))
     (dolist (date dates)
